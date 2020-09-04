@@ -13,7 +13,7 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-func FetchAPIs(source string) []gents.API {
+func FetchAPIs(source string) gents.Service {
 	pack, file, err := loadSource(source)
 	if err != nil {
 		log.Fatal(err)

@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/benoitkugler/apigen/fetch"
-	"github.com/benoitkugler/apigen/gents"
 )
 
 func main() {
@@ -16,7 +15,7 @@ func main() {
 	flag.Parse()
 
 	apis := fetch.FetchAPIs(*source)
-	code := gents.Service(apis).Render()
+	code := apis.Render()
 	if err := ioutil.WriteFile(*out, []byte(code), os.ModePerm); err != nil {
 		log.Fatal(err)
 	}
