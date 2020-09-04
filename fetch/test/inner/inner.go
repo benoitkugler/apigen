@@ -11,7 +11,7 @@ const Url = "/const_url_from_inner_package/"
 type Controller struct {
 }
 
-func (Controller) handleExt(c echo.Context) error {
+func (Controller) HandleExt(c echo.Context) error {
 	var in []int64
 	t, v := c.QueryParam("query1"), c.QueryParam("query2")
 	err := c.Bind(&in)

@@ -42,7 +42,7 @@ func routes(e *echo.Echo, ct controller, ct2 inner.Controller) {
 	e.GET(route, handler)
 	const routeFunc = "const_local_url"
 	e.GET(routeFunc, ct.handle1)
-	e.POST(inner.Url, ct2.handleExt)
+	e.POST(inner.Url, ct2.HandleExt)
 	e.POST(inner.Url+"endpoint", ct.handler2)
 	e.POST("host"+inner.Url, ct.handler3)
 	e.POST("host"+"endpoint", ct.handler4)
