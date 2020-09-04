@@ -8,7 +8,6 @@ import (
 	"go/token"
 	"go/types"
 	"log"
-	"regexp"
 
 	"github.com/benoitkugler/apigen/gents"
 	"golang.org/x/tools/go/packages"
@@ -75,14 +74,14 @@ func parse(pkg *packages.Package, f *ast.File) []gents.API {
 				// we are looking for .<METHOD>(url, handler)
 				continue
 			}
-			path := parseArgPath(callExpr.Args[0], pkg)
-			if path == "" {
+			path, err := parseArgPath(callExpr.Args[0], pkg, f.Imports)
+			if err != nil {
+				fmt.Printf("%s\n", err)
 				continue
 			}
-			path = replacePlaceholders(path)
 			contrat, err := parseArgHandler(callExpr.Args[1], pkg)
 			if err != nil {
-				log.Printf("ignoring handler : %s", err)
+				fmt.Printf("%s\n", err)
 				continue
 			}
 			out = append(out, gents.API{Url: path, Method: methodName, Contrat: contrat})
@@ -91,36 +90,54 @@ func parse(pkg *packages.Package, f *ast.File) []gents.API {
 	return out
 }
 
-func isImportedPacakge(ident *ast.Ident, pkg *packages.Package) (*packages.Package, bool) {
-	for _, imported := range pkg.Imports {
-		if imported.Name == ident.Name {
-			return imported, true
+// look for ident in the imported packages of the source file
+func isImportedPacakge(ident *ast.Ident, pkg *packages.Package, fileImports []*ast.ImportSpec) (*packages.Package, bool) {
+
+	for _, imported := range fileImports {
+		impPkg := pkg.Imports[stringLitteral(imported.Path)]
+		pkgName := impPkg.Name
+		if imported.Name != nil { // use local package name
+			pkgName = imported.Name.String()
+		}
+		if pkgName == ident.Name { // use the local name of imported package
+			return impPkg, true
 		}
 	}
 	return nil, false
 }
 
-func resolveStringConst(arg *ast.Ident, pkg *packages.Package) string {
-	// start by local scope
-	localScope := pkg.Types.Scope().Innermost(arg.Pos())
+func resolveStringConst(arg *ast.Ident, pkg *packages.Package, local bool) (string, error) {
 	var obj types.Object
-	if localScope != nil {
-		obj = localScope.Lookup(arg.Name)
+	if local {
+		// start by local scope
+		localScope := pkg.Types.Scope().Innermost(arg.Pos())
+		if localScope != nil {
+			obj = localScope.Lookup(arg.Name)
+		}
 	}
 	if obj == nil { // package scope
 		obj = pkg.Types.Scope().Lookup(arg.Name)
 	}
+	if obj == nil {
+		return "", fmt.Errorf("can't resolve constant at %s", pkg.Fset.Position(arg.Pos()))
+	}
 	val := obj.(*types.Const).Val()
 	if val.Kind() == constant.String {
-		return constant.StringVal(val)
+		return constant.StringVal(val), nil
 	}
-	return ""
+	return "", fmt.Errorf("can't resolve constant at %s", pkg.Fset.Position(arg.Pos()))
 }
 
-func parseAddStrings(x, y ast.Expr, pkg *packages.Package) string {
-	valueX := parseArgPath(x, pkg)
-	valueY := parseArgPath(y, pkg)
-	return valueX + valueY
+func parseAddStrings(x, y ast.Expr, pkg *packages.Package, fileImports []*ast.ImportSpec) (string, error) {
+	valueX, err := parseArgPath(x, pkg, fileImports)
+	if err != nil {
+		return "", err
+	}
+	valueY, err := parseArgPath(y, pkg, fileImports)
+	if err != nil {
+		return "", err
+	}
+	return valueX + valueY, nil
 }
 
 func stringLitteral(arg *ast.BasicLit) string {
@@ -131,29 +148,28 @@ func stringLitteral(arg *ast.BasicLit) string {
 }
 
 // we support string litteral or string const
-func parseArgPath(arg ast.Expr, pkg *packages.Package) string {
+func parseArgPath(arg ast.Expr, pkg *packages.Package, fileImports []*ast.ImportSpec) (string, error) {
 	switch arg := arg.(type) {
 	case *ast.Ident:
 		if arg.Obj.Kind == ast.Con { // constant of the package
-			return resolveStringConst(arg, pkg)
+			return resolveStringConst(arg, pkg, true)
 		}
 	case *ast.SelectorExpr: // looking for imported constants
 		if pkgIdent, ok := arg.X.(*ast.Ident); ok {
-			if pkgImported, ok := isImportedPacakge(pkgIdent, pkg); ok {
-				return resolveStringConst(arg.Sel, pkgImported)
+			if pkgImported, ok := isImportedPacakge(pkgIdent, pkg, fileImports); ok {
+				return resolveStringConst(arg.Sel, pkgImported, false)
 			}
 		}
 	case *ast.BinaryExpr:
 		if arg.Op == token.ADD {
-			return parseAddStrings(arg.X, arg.Y, pkg)
+			return parseAddStrings(arg.X, arg.Y, pkg, fileImports)
 		}
 	case *ast.BasicLit:
 		if out := stringLitteral(arg); out != "" {
-			return out
+			return out, nil
 		}
 	}
-	log.Printf("Ignoring invalid type for url : %T", arg)
-	return ""
+	return "", fmt.Errorf("ignoring invalid url at %s", pkg.Fset.Position(arg.Pos()))
 }
 
 func resolveMethodReceiver(x *ast.Ident, pkg *packages.Package) *types.Named {
@@ -161,6 +177,9 @@ func resolveMethodReceiver(x *ast.Ident, pkg *packages.Package) *types.Named {
 	obj := localScope.Lookup(x.Name)
 	if obj == nil {
 		obj = pkg.Types.Scope().Lookup(x.Name)
+	}
+	if obj == nil {
+		return nil
 	}
 	if named, ok := obj.Type().(*types.Named); ok {
 		return named
@@ -181,7 +200,7 @@ func extractMethodBody(f *ast.File, pos token.Pos) (body []ast.Stmt, err error) 
 	return nil, errors.New("method not found")
 }
 
-// return the file where `fn` is defined
+// return the body of `fn`
 func findMethod(fn *types.Func, rootPkg *packages.Package) (body []ast.Stmt, err error) {
 	declFile := rootPkg.Fset.Position(fn.Pos()).Filename
 
@@ -226,27 +245,6 @@ func parseArgHandler(arg ast.Expr, pkg *packages.Package) (gents.Contrat, error)
 			}
 		}
 	}
-	return gents.Contrat{}, fmt.Errorf("invalid type for handler : %T", arg)
-}
+	return gents.Contrat{}, fmt.Errorf("ignoring invalid handler at %s", pkg.Fset.Position(arg.Pos()))
 
-var rePlaceholder = regexp.MustCompile(`:([^/"']+)`)
-
-const templateFuncReplace = `(%s) => %s%s` // path ,  .replace(placeholder, args[0]) ...
-
-func replacePlaceholders(endpoint string) string {
-	pls := rePlaceholder.FindAllString(endpoint, -1)
-	if len(pls) > 0 {
-		// the url has arguments
-		var args, calls string
-		for _, pl := range pls {
-			argname := pl[1:]
-			if argname == "default" || argname == "class" { // js keywords
-				argname += "_"
-			}
-			args += argname + ":string,"
-			calls += fmt.Sprintf(".replace('%s', %s)", pl, argname)
-		}
-		return fmt.Sprintf(templateFuncReplace, args, endpoint, calls)
-	}
-	return endpoint // basic url
 }

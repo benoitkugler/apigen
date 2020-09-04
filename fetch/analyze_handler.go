@@ -34,14 +34,23 @@ func analyzeHandler(body []ast.Stmt, pkg *types.Package) gents.Contrat {
 		case *ast.AssignStmt:
 			for _, rh := range stmt.Rhs {
 				out.Input = parseBindCall(rh, pkg)
-				if queryParam := parseQueryParam(rh); queryParam != "" {
+				if queryParam := parseCallWithString(rh, "QueryParam"); queryParam != "" {
 					out.QueryParams = append(out.QueryParams, queryParam)
+				}
+				if formValue := parseCallWithString(rh, "FormValue"); formValue != "" {
+					out.Form.Values = append(out.Form.Values, formValue)
+				}
+				if formFile := parseCallWithString(rh, "FormFile"); formFile != "" {
+					out.Form.File = formFile
 				}
 			}
 		case *ast.IfStmt:
 			if asign, ok := stmt.Init.(*ast.AssignStmt); ok {
 				for _, rh := range asign.Rhs {
 					out.Input = parseBindCall(rh, pkg)
+					if formFile := parseCallWithString(rh, "FormFile"); formFile != "" {
+						out.Form.File = formFile
+					}
 				}
 			}
 
@@ -68,10 +77,10 @@ func parseBindCall(expr ast.Expr, pkg *types.Package) types.Type {
 	return nil
 }
 
-func parseQueryParam(expr ast.Expr) string {
+func parseCallWithString(expr ast.Expr, methodName string) string {
 	if call, ok := expr.(*ast.CallExpr); ok {
 		if caller, ok := call.Fun.(*ast.SelectorExpr); ok {
-			if caller.Sel.Name == "QueryParam" && len(call.Args) == 1 { // "c.QueryParam(name)"
+			if caller.Sel.Name == methodName && len(call.Args) == 1 { // "c.<methodName>(<string>)"
 				if lit, ok := call.Args[0].(*ast.BasicLit); ok {
 					return stringLitteral(lit)
 				}
