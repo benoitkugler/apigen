@@ -54,6 +54,22 @@ func paramsType(params []string) string {
 	return "{" + strings.Join(tmp, ", ") + "}"
 }
 
+func (a API) funcArgsName() string {
+	if a.withBody() {
+		if a.withFormData() { // form data mode
+			if fi := a.Contrat.Form.File; fi != "" {
+				return "params, file"
+			}
+		}
+	} else {
+		// params as query params
+		if len(a.Contrat.QueryParams) == 0 {
+			return ""
+		}
+	}
+	return "params"
+}
+
 func (a API) typeIn() string {
 	if a.withBody() {
 		if a.withFormData() { // form data mode
@@ -141,17 +157,28 @@ func (a API) generateCall() string {
 
 func (a API) generateMethod() string {
 	const template = `
+	protected async raw%s(%s) {
+		const fullUrl = %s;
+		%s;
+		return rep.data;
+	}
+	
 	async %s(%s) {
-        try {
-			const fullUrl = %s;
-            %s;
-            return rep.data;
-        } catch (error) {
-            this.handleError(error);
-        }
-	}`
+		this.startRequest();
+		try {
+			const out = await this.raw%s(%s);
+			this.onSuccess%s(out);
+		} catch (error) {
+			this.handleError(error);
+		}
+	}
+
+	protected abstract onSuccess%s(data: %s): void 
+	`
+	fnName := a.Contrat.HandlerName
 	return fmt.Sprintf(template,
-		a.Contrat.HandlerName, a.typeIn(), a.fullUrl(), a.generateCall())
+		fnName, a.typeIn(), a.fullUrl(), a.generateCall(), fnName, a.typeIn(),
+		fnName, a.funcArgsName(), fnName, fnName, a.typeOut())
 }
 
 type Service []API
@@ -190,6 +217,8 @@ func (s Service) Render() string {
 		constructor(protected baseUrl: string, protected authToken: string, protected urlParams: %s) {}
 
 		abstract handleError(error: any): void
+
+		abstract startRequest(): void
 
 		getHeaders() {
 			return { Authorization: "Bearer " + this.authToken }
