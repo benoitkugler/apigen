@@ -92,7 +92,6 @@ func parse(pkg *packages.Package, f *ast.File) []gents.API {
 
 // look for ident in the imported packages of the source file
 func isImportedPacakge(ident *ast.Ident, pkg *packages.Package, fileImports []*ast.ImportSpec) (*packages.Package, bool) {
-
 	for _, imported := range fileImports {
 		impPkg := pkg.Imports[stringLitteral(imported.Path)]
 		pkgName := impPkg.Name

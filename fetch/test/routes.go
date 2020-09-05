@@ -25,7 +25,10 @@ func (controller) handle1(c echo.Context) error {
 
 func handler(echo.Context) error { return nil }
 
-func (controller) handler2(echo.Context) error { return nil }
+func (controller) handler2(c echo.Context) error {
+	return c.JSON(200, controller{})
+}
+
 func (controller) handler3(echo.Context) error { return nil }
 func (controller) handler4(echo.Context) error { return nil }
 func (controller) handler5(echo.Context) error { return nil }

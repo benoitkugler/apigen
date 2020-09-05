@@ -73,8 +73,13 @@ func (a API) typeIn() string {
 	return "params: " + paramsType(a.Contrat.QueryParams)
 }
 
+// use a named package
 func (a API) typeOut() string {
-	return tstypes.GoToTs(a.Contrat.Return).Render()
+	ts := tstypes.GoToTs(a.Contrat.Return)
+	if _, isNamed := ts.(tstypes.TsNamedType); isNamed {
+		return "types." + ts.Render()
+	}
+	return ts.Render()
 }
 
 var rePlaceholder = regexp.MustCompile(`:([^/"']+)`)
@@ -120,14 +125,14 @@ func (a API) generateCall() string {
 			for _, param := range a.Contrat.Form.Values {
 				template += fmt.Sprintf("formData.append(%q, params[%q])\n", param, param)
 			}
-			template += "const rep:AxiosResponse<%s> = await Axios.%s(fullUrl, formData)"
+			template += "const rep:AxiosResponse<%s> = await Axios.%s(fullUrl, formData, { headers : this.getHeaders() })"
 		} else {
-			template = "const rep:AxiosResponse<%s> = await Axios.%s(fullUrl, params)"
+			template = "const rep:AxiosResponse<%s> = await Axios.%s(fullUrl, params, { headers : this.getHeaders() })"
 		}
 	} else {
 		var queryParams string
 		if len(a.Contrat.QueryParams) != 0 {
-			queryParams = ", {params: params}"
+			queryParams = ", { params: params, headers : this.getHeaders() }"
 		}
 		template = "const rep:AxiosResponse<%s> = await Axios.%s(fullUrl" + queryParams + ")"
 	}
@@ -180,9 +185,13 @@ func (s Service) Render() string {
 	import Axios, { AxiosResponse } from "axios";
 
 	export abstract class API {
-		constructor(protected baseUrl: string, protected urlParams: %s) {}
+		constructor(protected baseUrl: string, protected authToken: string, protected urlParams: %s) {}
 
-		abstract handleError(error: any)
+		abstract handleError(error: any): void
+
+		getHeaders() {
+			return { Authorization: "Bearer " + this.authToken }
+		}
 
 		%s
 	}`, s.urlParamsType(), strings.Join(apiCalls, "\n"))

@@ -1,6 +1,7 @@
 package fetch
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -23,8 +24,11 @@ func analyzeHandler(body []ast.Stmt, pkg *types.Package) gents.Contrat {
 					if method.Sel.Name == "JSON" || method.Sel.Name == "JSONPretty" {
 						if len(call.Args) >= 2 {
 							output := call.Args[1] // c.JSON(200, output)
-							if output, ok := output.(*ast.Ident); ok {
+							switch output := output.(type) {
+							case *ast.Ident:
 								out.Return = resolveLocalType(output, pkg)
+							case *ast.CompositeLit:
+								out.Return = parseCompositeLit(output, pkg)
 							}
 						}
 					}
@@ -33,7 +37,9 @@ func analyzeHandler(body []ast.Stmt, pkg *types.Package) gents.Contrat {
 
 		case *ast.AssignStmt:
 			for _, rh := range stmt.Rhs {
-				out.Input = parseBindCall(rh, pkg)
+				if typeIn := parseBindCall(rh, pkg); typeIn != nil {
+					out.Input = typeIn
+				}
 				if queryParam := parseCallWithString(rh, "QueryParam"); queryParam != "" {
 					out.QueryParams = append(out.QueryParams, queryParam)
 				}
@@ -47,7 +53,9 @@ func analyzeHandler(body []ast.Stmt, pkg *types.Package) gents.Contrat {
 		case *ast.IfStmt:
 			if asign, ok := stmt.Init.(*ast.AssignStmt); ok {
 				for _, rh := range asign.Rhs {
-					out.Input = parseBindCall(rh, pkg)
+					if typeIn := parseBindCall(rh, pkg); typeIn != nil {
+						out.Input = typeIn
+					}
 					if formFile := parseCallWithString(rh, "FormFile"); formFile != "" {
 						out.Form.File = formFile
 					}
@@ -98,4 +106,13 @@ func resolveLocalType(arg *ast.Ident, pkg *types.Package) types.Type {
 		obj = localScope.Lookup(arg.Name)
 	}
 	return obj.Type()
+}
+
+func parseCompositeLit(lit *ast.CompositeLit, pkg *types.Package) types.Type {
+	fmt.Printf("%v %T", lit.Type, lit.Type)
+	switch type_ := lit.Type.(type) {
+	case *ast.Ident:
+		return resolveLocalType(type_, pkg)
+	}
+	return nil
 }
