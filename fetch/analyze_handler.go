@@ -1,7 +1,6 @@
 package fetch
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -109,7 +108,6 @@ func resolveLocalType(arg *ast.Ident, pkg *types.Package) types.Type {
 }
 
 func parseCompositeLit(lit *ast.CompositeLit, pkg *types.Package) types.Type {
-	fmt.Printf("%v %T", lit.Type, lit.Type)
 	switch type_ := lit.Type.(type) {
 	case *ast.Ident:
 		return resolveLocalType(type_, pkg)
