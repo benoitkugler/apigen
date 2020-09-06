@@ -7,19 +7,10 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
-	"log"
 
 	"github.com/benoitkugler/apigen/gents"
 	"golang.org/x/tools/go/packages"
 )
-
-func FetchAPIs(source string) gents.Service {
-	pack, file, err := loadSource(source)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return parse(pack, file)
-}
 
 func isHttpMethod(name string) bool {
 	switch name {
@@ -30,7 +21,7 @@ func isHttpMethod(name string) bool {
 	}
 }
 
-func loadSource(sourceFile string) (*packages.Package, *ast.File, error) {
+func LoadSource(sourceFile string) (*packages.Package, *ast.File, error) {
 	cfg := &packages.Config{Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax | packages.NeedTypes | packages.NeedImports | packages.NeedDeps}
 	pkgs, err := packages.Load(cfg, "file="+sourceFile)
 	if err != nil {
@@ -48,8 +39,8 @@ func loadSource(sourceFile string) (*packages.Package, *ast.File, error) {
 
 // look for method calls .GET .POST .PUT .DELETE
 // inside all top level functions in `filename`
-func parse(pkg *packages.Package, f *ast.File) []gents.API {
-	var out []gents.API
+func Parse(pkg *packages.Package, f *ast.File) gents.Service {
+	var out gents.Service
 	for _, decl := range f.Decls {
 		funcStm, ok := decl.(*ast.FuncDecl)
 		if !ok || funcStm.Body == nil {

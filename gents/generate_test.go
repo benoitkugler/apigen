@@ -24,5 +24,5 @@ func TestGenerate(t *testing.T) {
 			},
 		},
 	}
-	fmt.Println(apis.Render())
+	fmt.Println(apis.Render(nil))
 }

@@ -2,26 +2,34 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 
 	"github.com/benoitkugler/apigen/fetch"
+	"github.com/benoitkugler/structgen/enums"
 )
 
 func main() {
 	source := flag.String("source", "", "go source file containing the API")
 	out := flag.String("out", "", "ts output file")
-	typesFile := flag.String("types", "", "path to types declaration to import")
 	flag.Parse()
 
-	apis := fetch.FetchAPIs(*source)
-	code := apis.Render()
-	if *typesFile != "" {
-		code = fmt.Sprintf("import * as types from %q\n", *typesFile) + code
+	pkg, f, err := fetch.LoadSource(*source)
+	if err != nil {
+		log.Fatalf("can't type check package : %s", err)
 	}
+	apis := fetch.Parse(pkg, f)
+
+	enumTable, err := enums.FetchEnums(pkg)
+	if err != nil {
+		log.Fatalf("cant't parse enums : %s", err)
+	}
+
+	code := apis.Render(enumTable)
+
 	if err := ioutil.WriteFile(*out, []byte(code), os.ModePerm); err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("Api generated in %s", *out)
 }
