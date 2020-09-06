@@ -198,11 +198,11 @@ func (a API) generateCall() string {
 			template = "const rep:AxiosResponse<%s> = await Axios.%s(fullUrl, params, { headers : this.getHeaders() })"
 		}
 	} else {
-		var queryParams string
+		callParams := ", { headers: this.getHeaders() }"
 		if len(a.Contrat.QueryParams) != 0 {
-			queryParams = fmt.Sprintf(", { params: %s, headers : this.getHeaders() }", a.Contrat.convertTypedQueryParams())
+			callParams = fmt.Sprintf(", { params: %s, headers : this.getHeaders() }", a.Contrat.convertTypedQueryParams())
 		}
-		template = "const rep:AxiosResponse<%s> = await Axios.%s(fullUrl" + queryParams + ")"
+		template = "const rep:AxiosResponse<%s> = await Axios.%s(fullUrl" + callParams + ")"
 	}
 	return fmt.Sprintf(template, a.typeOut(), a.methodLower())
 }
