@@ -6,9 +6,14 @@ import (
 	"go/types"
 
 	"github.com/benoitkugler/apigen/gents"
+	"github.com/benoitkugler/structgen/tstypes"
 )
 
 // Look for Bind(), QueryParam() and JSON() method calls
+// Some custom parsing function are also supported :
+// 	- BindNoId -> expects a type without id field
+//	- QueryParamBool -> convert string to boolean
+//	- QueryParamInt64 -> convert string to int64
 // pkg is the pacakge of the method
 func analyzeHandler(body []ast.Stmt, pkg *types.Package) gents.Contrat {
 	var out gents.Contrat
@@ -35,60 +40,82 @@ func analyzeHandler(body []ast.Stmt, pkg *types.Package) gents.Contrat {
 			}
 
 		case *ast.AssignStmt:
-			for _, rh := range stmt.Rhs {
-				if typeIn := parseBindCall(rh, pkg); typeIn != nil {
-					out.Input = typeIn
-				}
-				if queryParam := parseCallWithString(rh, "QueryParam"); queryParam != "" {
-					out.QueryParams = append(out.QueryParams, queryParam)
-				}
-				if formValue := parseCallWithString(rh, "FormValue"); formValue != "" {
-					out.Form.Values = append(out.Form.Values, formValue)
-				}
-				if formFile := parseCallWithString(rh, "FormFile"); formFile != "" {
-					out.Form.File = formFile
-				}
-			}
+			parseAssignments(stmt.Rhs, pkg, &out)
 		case *ast.IfStmt:
-			if asign, ok := stmt.Init.(*ast.AssignStmt); ok {
-				for _, rh := range asign.Rhs {
-					if typeIn := parseBindCall(rh, pkg); typeIn != nil {
-						out.Input = typeIn
-					}
-					if formFile := parseCallWithString(rh, "FormFile"); formFile != "" {
-						out.Form.File = formFile
-					}
-				}
+			if assign, ok := stmt.Init.(*ast.AssignStmt); ok {
+				parseAssignments(assign.Rhs, pkg, &out)
 			}
-
 		}
 	}
 	return out
 }
 
-func parseBindCall(expr ast.Expr, pkg *types.Package) types.Type {
-	if call, ok := expr.(*ast.CallExpr); ok {
-		if caller, ok := call.Fun.(*ast.SelectorExpr); ok {
-			if caller.Sel.Name == "Bind" && len(call.Args) == 1 { // "c.Bind(in)"
-				switch arg := call.Args[0].(type) {
-				case *ast.Ident: // c.Bind(pointer)
-					return resolveLocalType(arg, pkg)
-				case *ast.UnaryExpr: // c.Bind(&value)
-					if ident, ok := arg.X.(*ast.Ident); arg.Op == token.AND && ok {
-						return resolveLocalType(ident, pkg)
-					}
-				}
-			}
+func parseAssignments(rhs []ast.Expr, pkg *types.Package, out *gents.Contrat) {
+	for _, rh := range rhs {
+		if typeIn := parseBindCall(rh, pkg); typeIn.Type != nil {
+			out.Input = typeIn
+		}
+		if queryParam := parseCallWithString(rh, "QueryParam"); queryParam != "" {
+			out.QueryParams = append(out.QueryParams, gents.TypedParam{Name: queryParam, Type: tstypes.TsString})
+		}
+		if queryParam := parseCallWithString(rh, "QueryParamBool"); queryParam != "" { // special converter
+			out.QueryParams = append(out.QueryParams, gents.TypedParam{Name: queryParam, Type: tstypes.TsBoolean})
+		}
+		if queryParam := parseCallWithString(rh, "QueryParamInt64"); queryParam != "" { // special converter
+			out.QueryParams = append(out.QueryParams, gents.TypedParam{Name: queryParam, Type: tstypes.TsNumber})
+		}
+		if formValue := parseCallWithString(rh, "FormValue"); formValue != "" {
+			out.Form.Values = append(out.Form.Values, formValue)
+		}
+		if formFile := parseCallWithString(rh, "FormFile"); formFile != "" {
+			out.Form.File = formFile
+		}
+	}
+}
+
+// TODO: support New<T> types
+func resolveBindTarget(arg ast.Expr, pkg *types.Package) types.Type {
+	switch arg := arg.(type) {
+	case *ast.Ident: // c.Bind(pointer)
+		return resolveLocalType(arg, pkg)
+	case *ast.UnaryExpr: // c.Bind(&value)
+		if ident, ok := arg.X.(*ast.Ident); arg.Op == token.AND && ok {
+			return resolveLocalType(ident, pkg)
 		}
 	}
 	return nil
 }
 
+func parseBindCall(expr ast.Expr, pkg *types.Package) gents.TypeNoId {
+	if call, ok := expr.(*ast.CallExpr); ok {
+		switch caller := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			if caller.Sel.Name == "Bind" && len(call.Args) == 1 { // "c.Bind(in)"
+				typ := resolveBindTarget(call.Args[0], pkg)
+				return gents.TypeNoId{Type: typ}
+			}
+		case *ast.Ident:
+			if caller.Name == "BindNoId" && len(call.Args) == 2 { // BindNoId(c, in)
+				typ := resolveBindTarget(call.Args[1], pkg)
+				return gents.TypeNoId{Type: typ, NoId: true}
+			}
+		}
+	}
+	return gents.TypeNoId{}
+}
+
 func parseCallWithString(expr ast.Expr, methodName string) string {
 	if call, ok := expr.(*ast.CallExpr); ok {
-		if caller, ok := call.Fun.(*ast.SelectorExpr); ok {
+		switch caller := call.Fun.(type) {
+		case *ast.SelectorExpr:
 			if caller.Sel.Name == methodName && len(call.Args) == 1 { // "c.<methodName>(<string>)"
 				if lit, ok := call.Args[0].(*ast.BasicLit); ok {
+					return stringLitteral(lit)
+				}
+			}
+		case *ast.Ident:
+			if caller.Name == methodName && len(call.Args) == 2 { // <methodName>(c, <string>)
+				if lit, ok := call.Args[1].(*ast.BasicLit); ok {
 					return stringLitteral(lit)
 				}
 			}

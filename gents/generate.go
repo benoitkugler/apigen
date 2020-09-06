@@ -13,10 +13,43 @@ import (
 	"github.com/benoitkugler/structgen/tstypes"
 )
 
+type TypedParam struct {
+	Name string
+	Type tstypes.TsType
+}
+
+// return arg: String(params[arg])
+func (t TypedParam) asObjectKey() string {
+	out := fmt.Sprintf("%q: ", t.Name)
+	switch t.Type {
+	case tstypes.TsNumber:
+		out += fmt.Sprintf("String(params[%q])", t.Name) // stringify
+	case tstypes.TsBoolean:
+		out += fmt.Sprintf("params[%q] ? 'ok' : ''", t.Name) // stringify
+	default:
+		out += fmt.Sprintf("params[%q]", t.Name) // no converter
+	}
+	return out
+}
+
+// TypeNoId represents a type that might omit the "id" field
+type TypeNoId struct {
+	Type types.Type
+	NoId bool
+}
+
+func (t TypeNoId) render() string {
+	baseType := goToTs(t.Type).Render()
+	if t.NoId {
+		return "New<" + baseType + ">"
+	}
+	return baseType
+}
+
 type Contrat struct {
 	HandlerName string
-	Input       types.Type
-	QueryParams []string
+	Input       TypeNoId
+	QueryParams []TypedParam
 	Form        Form
 	Return      types.Type
 }
@@ -36,6 +69,15 @@ func (f Form) IsZero() bool {
 	return f.File == "" && len(f.Values) == 0
 }
 
+// type string
+func (f Form) typedValues() []TypedParam {
+	out := make([]TypedParam, len(f.Values))
+	for i, v := range f.Values {
+		out[i] = TypedParam{Name: v, Type: tstypes.TsString}
+	}
+	return out
+}
+
 func (a API) withBody() bool {
 	return a.Method == http.MethodPost || a.Method == http.MethodPut
 }
@@ -48,10 +90,10 @@ func (a API) methodLower() string {
 	return strings.ToLower(a.Method)
 }
 
-func paramsType(params []string) string {
+func paramsType(params []TypedParam) string {
 	tmp := make([]string, len(params))
 	for i, s := range params {
-		tmp[i] = fmt.Sprintf("%q: string", s) // quote for names like "id-1"
+		tmp[i] = fmt.Sprintf("%q: %s", s.Name, s.Type.Render()) // quote for names like "id-1"
 	}
 	return "{" + strings.Join(tmp, ", ") + "}"
 }
@@ -79,13 +121,13 @@ func goToTs(typ types.Type) tstypes.TsType {
 func (a API) typeIn() string {
 	if a.withBody() {
 		if a.withFormData() { // form data mode
-			params := "params: " + paramsType(a.Contrat.Form.Values)
+			params := "params: " + paramsType(a.Contrat.Form.typedValues())
 			if fi := a.Contrat.Form.File; fi != "" {
 				params += ", file: File"
 			}
 			return params
 		} else { // JSON mode
-			return "params: " + goToTs(a.Contrat.Input).Render()
+			return "params: " + a.Contrat.Input.render()
 		}
 	}
 	// params as query params
@@ -132,6 +174,14 @@ func (a API) fullUrl() string {
 	return fmt.Sprintf("this.baseUrl + %q", a.Url) // basic url
 }
 
+func (c Contrat) convertTypedQueryParams() string {
+	chunks := make([]string, len(c.QueryParams))
+	for i, param := range c.QueryParams {
+		chunks[i] = param.asObjectKey()
+	}
+	return "{ " + strings.Join(chunks, ", ") + " }"
+}
+
 func (a API) generateCall() string {
 	var template string
 	if a.withBody() {
@@ -150,7 +200,7 @@ func (a API) generateCall() string {
 	} else {
 		var queryParams string
 		if len(a.Contrat.QueryParams) != 0 {
-			queryParams = ", { params: params, headers : this.getHeaders() }"
+			queryParams = fmt.Sprintf(", { params: %s, headers : this.getHeaders() }", a.Contrat.convertTypedQueryParams())
 		}
 		template = "const rep:AxiosResponse<%s> = await Axios.%s(fullUrl" + queryParams + ")"
 	}
@@ -171,6 +221,7 @@ func (a API) generateMethod() string {
 		try {
 			const out = await this.raw%s(%s);
 			this.onSuccess%s(out);
+			return out
 		} catch (error) {
 			this.handleError(error);
 		}
@@ -206,11 +257,21 @@ func (s Service) urlParamsType() string {
 	return "{" + strings.Join(sorted, ", ") + "}"
 }
 
+type tsNewDeclaration struct{}
+
+func (tsNewDeclaration) Id() string { return "__ts_new_declaration" }
+func (tsNewDeclaration) Render() string {
+	return `export type New<T extends { id: number }> = Omit<T, "id"> & Partial<Pick<T, "id">>;`
+}
+
 func (s Service) renderTypes(enum enums.EnumTable) string {
 	decl := loader.NewDeclarations()
 	handler := tstypes.NewHandler(enum)
 	for _, api := range s { // write top-level decl
-		handler.AnalyseType(decl, api.Contrat.Input)
+		handler.AnalyseType(decl, api.Contrat.Input.Type)
+		if api.Contrat.Input.NoId {
+			decl.Add(tsNewDeclaration{})
+		}
 		handler.AnalyseType(decl, api.Contrat.Return)
 	}
 	return decl.ToString()
