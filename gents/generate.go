@@ -215,7 +215,7 @@ func (a API) generateMethod() string {
 		return rep.data;
 	}
 	
-	// wraps raw%s and handles the error
+	/** %s wraps raw%s and handles the error */
 	async %s(%s) {
 		this.startRequest();
 		try {
@@ -231,7 +231,7 @@ func (a API) generateMethod() string {
 	`
 	fnName := a.Contrat.HandlerName
 	return fmt.Sprintf(template,
-		fnName, a.typeIn(), a.fullUrl(), a.generateCall(), fnName, fnName, a.typeIn(),
+		fnName, a.typeIn(), a.fullUrl(), a.generateCall(), fnName, fnName, fnName, a.typeIn(),
 		fnName, a.funcArgsName(), fnName, fnName, a.typeOut())
 }
 
